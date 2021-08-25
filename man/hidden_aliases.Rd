@@ -6,6 +6,8 @@
 \alias{colnames,MatchedSummarizedExperiment-method}
 \alias{$,MatchedSummarizedExperiment-method}
 \alias{matchedData,MatchedSummarizedExperiment-method}
+\alias{filterMatches,MatchedSummarizedExperiment-method}
+\alias{addMatches,MatchedSummarizedExperiment-method}
 \alias{hidden_aliases}
 \title{Internal page for hidden aliases}
 \usage{
@@ -14,6 +16,26 @@
 \S4method{$}{MatchedSummarizedExperiment}(x, name)
 
 \S4method{matchedData}{MatchedSummarizedExperiment}(object, columns = colnames(object), ...)
+
+\S4method{filterMatches}{MatchedSummarizedExperiment}(
+  object,
+  queryValues = integer(),
+  targetValues = integer(),
+  queryColname = character(),
+  targetColname = character(),
+  idxs = integer(),
+  ...
+)
+
+\S4method{addMatches}{MatchedSummarizedExperiment}(
+  object,
+  queryValues = integer(),
+  targetValues = integer(),
+  queryColname = character(),
+  targetColname = character(),
+  scores = data.frame(),
+  indexes = FALSE
+)
 }
 \value{
 Not applicable

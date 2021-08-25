@@ -45,6 +45,18 @@
 #'
 #' - `pruneTarget` *cleans* the object by removing non-matched
 #'   **target** elements.
+#'   
+#' - `filterMatches` keeps only the matches corresponding to certain indexes or
+#'   values of `query` and target.
+#'   
+#' It is possible to add new matches to a `Matched` or 
+#' `MatchedSummarizedExperiment` object via `addMatches`. With parameters 
+#' `queryValues` and `targetValues` it is possible to specify values of `query` 
+#' and `target` (if they are 1-dimensional) or one of their columns (specified 
+#' with parameters `queryColname` or `targetColname`) and these values are used to 
+#' establish new matches. By using parameter `use_idxs` it is possible to 
+#' interpret `queryValues` and `targetValues` as vector of indexes of the 
+#' elements of `query` and `target` to be matched together.
 #'
 #' @section Extracting data:
 #'
@@ -100,7 +112,8 @@
 #'
 #' @param j for `[`: ignored.
 #'
-#' @param idxs for `keepMatches`: indexes of the matches to keep.
+#' @param idxs for `filterMatches`: indexes of the matches to keep (if 
+#'  `keep = TRUE`) or to drop if (`keep = FALSE`).
 #'
 #' @param matches `data.frame` with columns `"query_idx"` (`integer`),
 #'   `"target_idx"` (`integer`) and `"score"` (`numeric`) representing the n:m
@@ -116,7 +129,34 @@
 #' @param query object with the query elements.
 #'
 #' @param x `Matched` object.
+#' 
+#' @param queryValues vector of values to search for in `query` (if `query` 
+#' is 1-dimensional) or in column `queryColname` of `query` (if `query` is  
+#' 2-dimensional). This parameter can be used in `filterMatches` 
+#' and when it is used also the parameter `targetValues` must be passed. 
+#' `filterMatches` will return a `Matched` object with only the matches whose 
+#' `query` and  `target` values are equal respectivly to `targetValues[i]` and 
+#' `queryValues[i]` for some i.
+#' 
+#' @param targetValues vector of values to search for in `target` (if `target` 
+#' is 1-dimensional) or in column `targetColname` of `target` (if `target` is 
+#' 2-dimensional). 
+#' 
+#' @param queryColname if `query` is 2-dimensional: column of `query` against 
+#' which elements of `queryValues` are compared.
+#' 
+#' @param targetColname if `query` is 2-dimensional: column of `target` against 
+#' which elements of `targetValues` are compared.
 #'
+#' @param keep for `filterMatches`: `logical`. If `keep = TRUE` the matches are 
+#' kept, if `keep = FALSE` they are removed.
+#' 
+#' @param use_idxs for `addMatches`: specifies if `queryValues` and 
+#' `targetValues` are expected to be vectors of indexes.
+#' 
+#' @param scores for `addMatches`: data.frame specifying the scores for the matches 
+#' to add.
+#' 
 #' @param ... additional parameters.
 #'
 #' @return See individual method description above for details.
@@ -239,6 +279,24 @@
 #' ## Reducing the target elements to only those that match at least one query row
 #' mo_sub <- pruneTarget(mo_sub)
 #' nrow(target(mo_sub))
+#'
+#' ## Keeping only certain matches through their indexes 
+#' idxs <- c(1, 3, 5)
+#' mosub <- filterMatches(mo, idxs = idxs)
+#' mosub@matches
+#' mo@matches[-idxs, ]
+#' 
+#' ## Keeping matches corresponding to certain values of query and target
+#' queryValues <- c(q1[mo@matches[idxs, "query_idx"], "col1"], -1, - 2)
+#' targetValues <- c(t2[mo@matches[idxs, "target_idx"]], -2, -1)
+#' mosub <- filterMatches(mo, queryValues = queryValues, 
+#'                      targetValues = targetValues, queryColname = "col1")
+#' mosub@matches
+#'
+#' ## Removing matches using values of query and target
+#' mosub <- filterMatches(mo, keep = FALSE, queryValues = queryValues, 
+#'                      targetValues = targetValues, queryColname = "col1")
+#' mosub@matches
 #'
 #'
 #'
@@ -620,26 +678,136 @@ pruneTarget <- function(object) {
     object
 }
 
-# Maybe we can delete one of the following functions.
-
-#' @rdname Matched
-#'
-#' @importFrom methods validObject
-#'
-#' @export
-removeMatches <- function(object, idxs) {
-    object@matches <- object@matches[-idxs, ]
-    validObject(object)
-    object
+.findMatchesIdxs <- function(query, target, matches, queryValues = integer(), 
+                         targetValues = integer(), 
+                         queryColname = character(), 
+                         targetColname = character()) {
+  if(length(queryValues) != length(targetValues))
+    stop("'queryValues' and 'targetValues' must have the same length")
+  if(length(dim(query)) == 2) {
+    if(length(queryColname) == 0)
+      stop("\"", queryColname,"\" must be set when 'query' is 2-dimensional")
+    if(!queryColname %in% colnames(query))
+      stop("\"", queryColname,"\" is not a column of 'query'")
+  }
+  targetColname <- sub("target_", "", targetColname)
+  if(length(dim(target)) == 2) {
+    if(length(targetColname) == 0)
+      stop("\"", targetColname,"\" must be set when 'target' is 2-dimensional")
+    if(!targetColname %in% colnames(target))
+      stop("\"", targetColname,"\" is not a column of 'target'")
+  }
+  mq <- .extract_elements(query, matches$query_idx, queryColname, 
+                          drop = TRUE)
+  mt <- .extract_elements(target, matches$target_idx, targetColname,
+                          drop = TRUE)
+  unlist(sapply(seq_along(queryValues), function(i) 
+    which(mq == queryValues[i] & mt == targetValues[i])))
 }
 
 #' @rdname Matched
 #'
+#' @exportMethod filterMatches
+setGeneric("filterMatches", function(object, ...)
+  standardGeneric("filterMatches"))
+
+# Here I used the parameter idxs to allow the user to specify which rows of
+# matches they want to remove but maybe the user doesn't know that directly so 
+# I'm not sure if it's helpful. Maybe it's better if I allow queryValues and 
+# targetValues (I'm not really sure these names are really good so if you have 
+# a best option feel free to tell me) to be indexes of query and target whose 
+# match we want to keep or drop. If I understood correctly you proposed something
+# similar but I think that in this case we would have to introduce a new logic 
+# variable to distinguish if we want queryValues and targetValues to be 
+# interpreted as indexes.
+
+#' @rdname Matched
+#' 
 #' @importFrom methods validObject
 #'
 #' @export
-keepMatches <- function(object, idxs) {
-  object@matches <- object@matches[idxs, ]
-  validObject(object)
-  object
+setMethod("filterMatches", "Matched", 
+          function(object, queryValues = integer(), targetValues = integer(),
+                   queryColname = character(), targetColname = character(),
+                   idxs = integer(), keep = TRUE, ...) {
+            if(length(idxs) && any(!idxs %in% seq_len(nrow(object@matches))))
+              stop("some indexes in \"idxs\" are out of bounds")
+            if(!length(idxs) && length(queryValues))
+              idxs  <- .findMatchesIdxs(object@query, object@target, 
+                                        object@matches, queryValues, 
+                                        targetValues, queryColname, 
+                                        targetColname)
+            if(keep) to_keep <- seq_len(nrow(object@matches)) %in% idxs
+            else to_keep <- !seq_len(nrow(object@matches)) %in% idxs
+            object@matches <- object@matches[to_keep, ]
+            validObject(object)
+            object
+          })
+
+.addMatches <- function(query, target, matches, queryValues = integer(),
+                        targetValues = integer(), queryColname = character(),
+                        targetColname = character(), scores = data.frame(),
+                        use_idxs = FALSE) {
+  if(!is.data.frame(scores))
+    stop("'scores' must be a data.frame")
+  if(ncol(scores) != ncol(matches) - 2 || 
+     any(!colnames(scores) %in% colnames(matches)))
+    stop("columns of 'scores' incompatible with object matches")
+  if(length(queryValues) != length(targetValues) || 
+     length(queryValues) != nrow(scores))
+    stop("'queryValues', 'targetValues' and 'scores' must have the same length")
+  if(use_idxs) {
+    if(!is.integer(queryValues) || !is.integer(targetValues))
+      stop(paste0("'queryValues' and 'targetValues' must be integer ", 
+                  "vectors when 'use_idxs == TRUE'"))
+    if(any(!queryValues %in% seq_len(.nelements(query))))
+      stop("Some of the provided indexes in 'queryValues' are out of bound")
+    if(any(!targetValues %in% seq_len(.nelements(target))))
+      stop("Some of the provided indexes in 'queryValues' are out of bound") 
+    query_idx <- queryValues
+    target_idx <- targetValues
+  } else {
+    if(length(dim(query)) == 2)
+      if(!queryColname %in% colnames(query))
+        stop("\"", queryColname,"\" is not a column of 'query'")
+    if(length(dim(query)) == 2)
+      if(!targetColname %in% colnames(target))
+        stop("\"", targetColname,"\" is not a column of 'target'")
+    mq <- match(queryValues, .extract_elements(query, j = queryColname, 
+                                               drop = TRUE))
+    mt <- match(targetValues, .extract_elements(target, j = targetColname, 
+                                                drop = TRUE))
+    to_keep <- !is.na(mq) & !is.na(mt)
+    query_idx <- mq[to_keep]
+    target_idx <- mt[to_keep]
+    scores <- scores[to_keep, ]
+  }
+  new_matches <- rbind(matches, data.frame(query_idx = query_idx,
+                                           target_idx = target_idx,
+                                           score = scores))
+  # remove possible matches that were already in matches
+  new_matches[!duplicated(new_matches[, c("query_idx", "target_idx")]), ]
 }
+
+#' @rdname Matched
+#'
+#' @exportMethod addMatches
+setGeneric("addMatches", function(object, ...)
+  standardGeneric("addMatches"))
+
+#' @rdname Matched
+#' 
+#' @importFrom methods validObject
+#'
+#' @export
+setMethod("addMatches", "Matched", 
+          function(object, queryValues = integer(), targetValues = integer(),
+                   queryColname = character(), targetColname = character(), 
+                   scores = data.frame(), use_idxs = FALSE) {
+            object@matches <- .addMatches(object@query, object@target, 
+                                          object@matches, queryValues, 
+                                          targetValues, queryColname, 
+                                          targetColname, scores, use_idxs)
+            validObject(object)
+            object
+          })
